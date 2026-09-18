@@ -130,6 +130,12 @@ public class ShowSeat {
     this.bookingId = bookingId;
   }
 
+  /** A booked seat's cancellation (partial or full) releases it back to AVAILABLE for resale. */
+  public void cancelBooking() {
+    this.status = ShowSeatStatus.AVAILABLE;
+    this.bookingId = null;
+  }
+
   public void block() {
     this.status = ShowSeatStatus.BLOCKED;
   }

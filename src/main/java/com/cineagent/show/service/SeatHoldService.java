@@ -174,6 +174,62 @@ public class SeatHoldService {
     return hold;
   }
 
+  /**
+   * Locks and returns a hold's seats for booking checkout — the hold is validated (owned,
+   * ACTIVE, not logically expired) but NOT mutated; seats stay HELD. Used by
+   * {@code BookingService.create} to snapshot seat/category data for pricing without consuming
+   * the hold — payment happens later, over the network, strictly between transactions.
+   */
+  @Transactional
+  public HeldSeatsSnapshot lockOwnedActiveHold(Long holdId, Long userId) {
+    SeatHold hold = getOwnedActiveHold(holdId, userId);
+    if (hold.isLogicallyExpired(Instant.now(clock))) {
+      throw new ConflictException(ErrorCode.HOLD_EXPIRED, "Hold " + holdId + " has already expired");
+    }
+    List<ShowSeat> seats = lockSeatsForHold(holdId);
+    return new HeldSeatsSnapshot(hold, seats);
+  }
+
+  /**
+   * Re-locks a hold's seats and checks they are STILL genuinely held by it — called after a
+   * payment gateway round-trip to discover whether the hold expired (and was reclaimed by
+   * someone else) while the network call was in flight. No exception on failure: the caller
+   * branches on the boolean to run the seat-lost-after-payment compensation (AGENTS.md §4.6),
+   * which itself must call the gateway OUTSIDE this method's transaction.
+   */
+  @Transactional
+  public boolean seatsStillHeldByHold(Long holdId) {
+    List<ShowSeat> seats = lockSeatsForHold(holdId);
+    if (seats.isEmpty()) {
+      return false;
+    }
+    Instant now = Instant.now(clock);
+    SeatHold hold = seatHoldRepository.findById(holdId).orElse(null);
+    if (hold == null || hold.getStatus() != HoldStatus.ACTIVE || hold.isLogicallyExpired(now)) {
+      return false;
+    }
+    return seats.stream().allMatch(s -> holdId.equals(s.getHoldId()) && s.effectiveStatus(now) == ShowSeatStatus.HELD);
+  }
+
+  /** Commits a successful booking: seats -> BOOKED, hold -> CONSUMED. Caller must have just
+   * confirmed {@link #seatsStillHeldByHold} true in the SAME transaction. */
+  @Transactional
+  public void confirmHoldAsBooked(Long holdId, Long bookingId) {
+    List<ShowSeat> seats = lockSeatsForHold(holdId);
+    seats.forEach(seat -> seat.confirmBooking(bookingId));
+    seatHoldRepository.findById(holdId).ifPresent(SeatHold::markConsumed);
+  }
+
+  /** Releases specific BOOKED show_seat rows back to AVAILABLE (booking cancellation, full or
+   * partial). Locked ascending-id, same global order as everything else. */
+  @Transactional
+  public void releaseBookedSeats(List<Long> showSeatIds) {
+    List<ShowSeat> locked = showSeatRepository.lockAllByIdInOrder(showSeatIds.stream().sorted().toList());
+    locked.forEach(ShowSeat::cancelBooking);
+  }
+
+  public record HeldSeatsSnapshot(SeatHold hold, List<ShowSeat> seats) {}
+
   private SeatHold getOwnedActiveHold(Long holdId, Long userId) {
     SeatHold hold =
         seatHoldRepository

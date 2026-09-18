@@ -128,4 +128,11 @@ public class ShowService {
   public Page<Show> browse(Long cityId, Long movieId, Instant from, Instant to, Pageable pageable) {
     return showRepository.browse(cityId, movieId, from, to, pageable);
   }
+
+  /** Used by BookingCreateService to price a checkout — booking depends on show's service, never
+   * its repository directly (AGENTS.md dependency rule). */
+  @Transactional(readOnly = true)
+  public List<ShowPrice> getPrices(Long showId) {
+    return showPriceRepository.findByShowId(showId);
+  }
 }
