@@ -1,5 +1,6 @@
 package com.cineagent.show.api;
 
+import com.cineagent.booking.service.AdminShowCancellationService;
 import com.cineagent.show.api.dto.ShowDtos.CreateShowRequest;
 import com.cineagent.show.api.dto.ShowDtos.ShowResponse;
 import com.cineagent.show.service.ShowService;
@@ -17,9 +18,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminShowController {
 
   private final ShowService showService;
+  private final AdminShowCancellationService cancellationService;
 
-  public AdminShowController(ShowService showService) {
+  public AdminShowController(ShowService showService, AdminShowCancellationService cancellationService) {
     this.showService = showService;
+    this.cancellationService = cancellationService;
   }
 
   @PostMapping
@@ -29,7 +32,7 @@ public class AdminShowController {
 
   @PostMapping("/{id}/cancel")
   public ResponseEntity<Void> cancel(@PathVariable Long id) {
-    showService.cancel(id);
+    cancellationService.cancelShowAndRefundAll(id);
     return ResponseEntity.noContent().build();
   }
 }
