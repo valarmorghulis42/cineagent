@@ -86,7 +86,14 @@ public class ShowService {
     showPriceRepository.saveAll(prices);
 
     provisioningService.provision(show);
-    return show;
+    // Re-fetch fully-joined before returning — see ShowRepository.findByIdFetchAll's javadoc.
+    // screen.getTheater().getCity() above returns the City reference without forcing its
+    // initialization, so `show` can still carry an uninitialized proxy that would throw
+    // LazyInitializationException the moment ShowResponse.from() touches it outside this
+    // transaction (open-in-view=false).
+    return showRepository
+        .findByIdFetchAll(show.getId())
+        .orElseThrow(() -> ResourceNotFoundException.of(ErrorCode.SHOW_NOT_FOUND, show.getId()));
   }
 
   @Transactional
@@ -96,10 +103,24 @@ public class ShowService {
     // once that module exists (architecture plan enhancement B5).
   }
 
+  /**
+   * Plain read, no fetch joins — for callers that only touch Show's own fields (id, status,
+   * isBookableAt/hasEnded), never its screen/movie/city associations. {@link SeatHoldService}
+   * uses this on the hot seat-hold path; paying for four unnecessary joins there would be pure
+   * waste. Callers that DTO-map the result (touch screen/movie/city) must use {@link
+   * #getShowWithDetails} instead, or hit LazyInitializationException outside the transaction.
+   */
   @Transactional(readOnly = true)
   public Show getShow(Long id) {
     return showRepository
         .findById(id)
+        .orElseThrow(() -> ResourceNotFoundException.of(ErrorCode.SHOW_NOT_FOUND, id));
+  }
+
+  @Transactional(readOnly = true)
+  public Show getShowWithDetails(Long id) {
+    return showRepository
+        .findByIdFetchAll(id)
         .orElseThrow(() -> ResourceNotFoundException.of(ErrorCode.SHOW_NOT_FOUND, id));
   }
 

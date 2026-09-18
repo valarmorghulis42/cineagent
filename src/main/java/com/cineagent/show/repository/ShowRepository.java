@@ -33,9 +33,16 @@ public interface ShowRepository extends JpaRepository<Show, Long> {
   /**
    * Browse filter — every parameter optional via the (:x is null or ...) pattern. cityId is the
    * hot path (uses idx_show_city_starts); movieId and the date range are additional filters.
+   *
+   * <p>JOIN FETCH screen/theater/movie/city — ShowResponse.from() dereferences all four after
+   * this method's transaction has closed (open-in-view=false). All four are *-to-one, so the
+   * fetch join is pagination-safe (no row multiplication the way a *-to-many fetch join would
+   * cause).
    */
   @Query(
-      "select s from Show s where s.status = 'SCHEDULED' "
+      "select s from Show s join fetch s.screen sc join fetch sc.theater t "
+          + "join fetch s.movie m join fetch s.city c "
+          + "where s.status = 'SCHEDULED' "
           + "and (:cityId is null or s.city.id = :cityId) "
           + "and (:movieId is null or s.movie.id = :movieId) "
           + "and (:from is null or s.startsAt >= :from) "
@@ -47,4 +54,17 @@ public interface ShowRepository extends JpaRepository<Show, Long> {
       @Param("from") Instant from,
       @Param("to") Instant to,
       Pageable pageable);
+
+  /**
+   * JOIN FETCH everything ShowResponse.from() touches — see {@link #browse} javadoc. Used for
+   * any single-Show read whose result gets DTO-mapped, including right after {@code create()},
+   * where the newly-built Show's own screen/theater/city references can still be uninitialized
+   * Hibernate proxies (screen.getTheater().getCity() returns the City *reference* without
+   * forcing its initialization) — re-fetching this way is simpler and more robust than relying
+   * on session identity-map side effects to have initialized them in place.
+   */
+  @Query(
+      "select s from Show s join fetch s.screen sc join fetch sc.theater t "
+          + "join fetch s.movie m join fetch s.city c where s.id = :id")
+  Optional<Show> findByIdFetchAll(@Param("id") Long id);
 }

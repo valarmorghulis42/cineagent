@@ -45,7 +45,7 @@ public class ShowBrowseController {
 
   @GetMapping("/shows/{id}")
   public ShowResponse getShow(@PathVariable Long id) {
-    return ShowResponse.from(showService.getShow(id));
+    return ShowResponse.from(showService.getShowWithDetails(id));
   }
 
   @GetMapping("/shows/{id}/seats")
