@@ -113,6 +113,29 @@
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<dependency>
+			<!-- TestRestTemplate lives here in Boot 4.1's restructured test starters, not in
+			     spring-boot-starter-webmvc-test. -->
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-resttestclient</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<!-- Provides RestTemplateBuilder, which TestRestTemplateTestAutoConfiguration needs to
+			     introspect even under @ConditionalOnMissingBean; without it, that autoconfig class
+			     fails to load with a NoClassDefFoundError. -->
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-restclient</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<!-- Raw API only (AGENTS.md section 7), not embedded-database-spring-test /
+			     @AutoConfigureEmbeddedDatabase, which is unvalidated against Boot 4 / Platform 6. -->
+			<groupId>io.zonky.test</groupId>
+			<artifactId>embedded-postgres</artifactId>
+			<version>2.1.0</version>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>

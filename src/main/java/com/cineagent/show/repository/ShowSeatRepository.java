@@ -40,6 +40,25 @@ public interface ShowSeatRepository extends JpaRepository<ShowSeat, Long> {
 
   long countByShowId(Long showId);
 
+  List<ShowSeat> findByHoldId(Long holdId);
+
+  /**
+   * ID-only projections, deliberately NOT entity-hydrating — found necessary the hard way by
+   * {@code ConcurrentSeatHoldH2IT.reversedOrderRequests_noDeadlock}: resolving candidate rows via
+   * an entity-returning read (e.g. {@link #findByShowIdAndSeatIdIn}) and then re-reading those
+   * SAME rows through {@link #lockAllByIdInOrder} in the same persistence context makes Hibernate
+   * throw {@code ObjectOptimisticLockingFailureException} the moment the locking query wakes up
+   * to a row whose version another transaction bumped in between — "conflicting version of
+   * entity already held in persistence context." That is not a real seat conflict; it is an
+   * artifact of reading the same primary keys twice. Callers resolving ids-to-lock MUST go
+   * through one of these instead, so nothing is cached before the one, single, locking read.
+   */
+  @Query("select ss.id from ShowSeat ss where ss.show.id = :showId and ss.seat.id in :seatIds")
+  List<Long> findIdsByShowIdAndSeatIdIn(@Param("showId") Long showId, @Param("seatIds") List<Long> seatIds);
+
+  @Query("select ss.id from ShowSeat ss where ss.holdId = :holdId order by ss.id")
+  List<Long> findIdsByHoldId(@Param("holdId") Long holdId);
+
   /**
    * The seat-map projection — ONE query, no entity hydration, no lazy proxies. This is what
    * keeps the hottest read in the system (a show's seat map, ~100-300 rows, hit on every page
