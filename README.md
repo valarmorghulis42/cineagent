@@ -382,17 +382,17 @@ reminder job, is in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**.
 |---|---|---|
 | Multiple cities / theaters / shows | `catalog` + `show` modules, `City`→`Theater`→`Screen`→`Show` | — *(no unit test; see [Known gaps](#known-gaps))* |
 | Seat-level booking | Materialized `show_seat` rows, one per `(show, seat)` | `ConcurrentSeatHoldH2IT`, `ConcurrentSeatHoldPostgresIT` |
-| Time-bound holds, auto-release on expiry | `SeatHoldService` lazy expiry + `HoldExpirySweeper` | `AbstractConcurrentSeatHoldIT` (all three variants exercise expiry reclaim under lock) |
+| Time-bound holds, auto-release on expiry | `SeatHoldService` lazy expiry + `HoldExpirySweeper` | `AbstractConcurrentSeatHoldIT`, `SeatHoldTest`, `ShowSeatTest` |
 | Pricing tiers (regular/premium/weekend) | `ShowPrice` (per-show, per-category) — see [Assumptions](#assumptions-and-interpretations) | — *(no unit test)* |
-| Discount codes | `DiscountCode` + conditional-UPDATE usage cap | — *(no unit test; exercised live by `scripts/demo.sh`)* |
+| Discount codes | `DiscountCode` + conditional-UPDATE usage cap | `DiscountCodeTest`, `DiscountServiceTest` |
 | Payment | `PaymentGateway` port + `MockPaymentGateway` | — *(no unit test; exercised live)* |
 | Booking confirmation | `BookingPaymentService.recordConfirmed` | `ConcurrentSeatHoldHttpIT` (indirectly, via the hold path it shares) |
-| Refunds under configurable policies | `RefundPolicy` tiered rows, `RefundPolicyResolver`, `RefundService` | — *(no unit test)* |
+| Refunds under configurable policies | `RefundPolicy` tiered rows, `RefundPolicyResolver`, `RefundService` | `RefundPolicyResolverTest`, `BookingCancellationServiceTest` |
 | Serialize concurrent booking, no double-allocation | `SeatHoldService.acquire` — ascending-id `FOR UPDATE` + `@Version` backstop | `ConcurrentSeatHoldH2IT`, `ConcurrentSeatHoldPostgresIT`, `ConcurrentSeatHoldHttpIT` (4 variants total) |
 | Confirmation and reminder notifications, non-blocking | Transactional outbox (`OutboxEventListener` + `OutboxDispatcher`) + `ReminderService` | — *(no unit test; `GET /admin/notifications` makes it observable live)* |
 | Admin: cities/theaters/shows/seat layouts/pricing/refund policies | `AdminCatalogController`, `AdminShowController`, `AdminDiscountController`, `AdminRefundPolicyController`, bulk seat layout | — *(no unit test)* |
-| Customer: browse, book/cancel seats, booking history | `ShowBrowseController`, `BookingController` (incl. partial per-seat cancel, both history readings) | — *(no unit test)* |
-| REST APIs, persistence, RBAC, validation, error handling | Full stack — see [API reference](#api-reference) | `ConcurrentSeatHoldHttpIT` for the error-contract shape; no dedicated `@WebMvcTest` slice |
+| Customer: browse, book/cancel seats, booking history | `ShowBrowseController`, `BookingController` (incl. partial per-seat cancel, both history readings) | `BookingTest`, `BookingStatusTest`, `BookingCreateServiceTest` |
+| REST APIs, persistence, RBAC, validation, error handling | Full stack — see [API reference](#api-reference) | `ConcurrentSeatHoldHttpIT` for errors; `BookingControllerValidationTest`, `AdminDiscountControllerValidationTest` |
 
 **Read plainly**: the concurrency guarantee — the one requirement the brief calls out as needing
 correct serialization under contention — is proven exhaustively, on two engines and over HTTP.
@@ -474,10 +474,7 @@ treated as part of the submission:
 
 Documented honestly rather than left for a reviewer to discover:
 
-- **No unit tests outside the concurrency suite.** Pricing/discount arithmetic, refund
-  percentage resolution, the booking state machine, and request validation are all exercised
-  live (via `scripts/demo.sh`) but have no automated assertion in isolation. This is the largest
-  gap against the brief's own "Unit & Integration Tests for the core flows" requirement.
+
 - **Idempotency keys are not implemented.** Several `ErrorCode` entries
   (`IDEMPOTENCY_KEY_REQUIRED`, `IDEMPOTENCY_KEY_REUSE`, `REQUEST_IN_PROGRESS`,
   `PAYMENT_ALREADY_EXISTS`, `REFUND_ALREADY_EXISTS`) are provisioned but never thrown. What
