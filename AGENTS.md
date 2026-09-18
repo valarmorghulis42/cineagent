@@ -40,6 +40,16 @@ microservices, advanced auth (OAuth/SSO/MFA), production-grade observability/mon
 `JAVA_HOME` on the dev machine is pinned to JDK 25 via `~/.zshrc`. Every `./mvnw` invocation in
 this repo must run under that JDK — verify with `java -version` if a build behaves unexpectedly.
 
+**Spring Boot 4 / Jackson 3 gotcha, discovered while building `common/config/JacksonConfig`:**
+Boot 4.1 ships Jackson 3, whose packages moved from `com.fasterxml.jackson.*` to `tools.jackson.*`
+(only `jackson-annotations` stayed on the old `com.fasterxml.jackson.annotation` package for
+compatibility). The customizer bean type is `JsonMapperBuilderCustomizer`
+(`org.springframework.boot.jackson.autoconfigure`), not the Jackson-2-era
+`Jackson2ObjectMapperBuilderCustomizer`. `WRITE_BIGDECIMAL_AS_PLAIN` moved from the databind
+`SerializationFeature` to the core `tools.jackson.core.StreamWriteFeature`. If a future change
+needs another Jackson feature flag, check which of the two enums it now lives on before guessing
+— Jackson 2 muscle memory will be wrong about half the time on this stack.
+
 ## 3. Package layout — feature-sliced, not layered
 
 ```
@@ -89,18 +99,39 @@ reviewing a diff must check for these by hand.
    `setScale(2)`, once per line item as it is produced — never round only at the end (breakdowns
    must sum exactly to the total; this is asserted in tests).
 3. **Locking queries are single-table, by primary key, never with a status predicate in the
-   `WHERE` clause of a `FOR UPDATE` query.** Two independent reasons: (a) under `READ_COMMITTED`
-   a blocked `FOR UPDATE` re-evaluates its `WHERE` on wake-up, so a status predicate can silently
-   return fewer rows than requested; (b) H2 rejects `FOR UPDATE` combined with `JOIN` outright.
-   Check status in Java, after the lock is held.
+   `WHERE` clause of a `FOR UPDATE` query.** The reason is `ForUpdateStatusPredicateTrapTest`
+   (verified empirically, not assumed): under `READ_COMMITTED` a blocked `FOR UPDATE` re-evaluates
+   its `WHERE` on wake-up, so `... WHERE id IN (1,2) AND status='AVAILABLE' FOR UPDATE` can
+   silently return **1 row when 2 were requested**, because the row that changed status while we
+   waited vanishes from the result set. (Earlier drafts of this document additionally claimed "H2
+   rejects `FOR UPDATE` combined with `JOIN` outright" — that claim was **wrong**; H2 2.4.240
+   accepts and executes a joined `FOR UPDATE`. The single-table-by-PK rule stands regardless,
+   because the re-evaluation trap above applies on any engine, and because H2's *locking*
+   semantics for a joined `FOR UPDATE`, as opposed to its parsing of one, remain undocumented and
+   are not something we depend on.) Check status in Java, after the lock is held.
 4. **Every multi-row lock acquisition sorts ids ascending in Java before querying**, in addition
    to any SQL `ORDER BY`. Global lock order across the whole system:
-   `booking → show_seat (asc id) → discount_code → inserts`. This is what makes concurrent
-   multi-seat bookings deadlock-free — do not acquire locks in request order.
+   `booking → show_seat (asc id) → discount_code → inserts`. Both the `@Scheduled` hold-expiry
+   sweeper and the outbox dispatcher must follow the same ascending-id rule when they lock more
+   than one `show_seat`/`outbox_message` row — a batch `UPDATE` that locks in storage order can
+   deadlock against a booking thread locking ascending. This is what makes concurrent multi-seat
+   bookings (and background jobs) deadlock-free — do not acquire locks in request/storage order.
 5. **`show_seat` carries both a pessimistic lock path (`SELECT … FOR UPDATE`) and an optimistic
-   `@Version` column.** The version check is not a nicety — H2 (the default runtime profile) does
-   not document `FOR UPDATE` as taking a true exclusive row lock, so `@Version` is the mechanism
-   that makes the no-double-booking guarantee hold on the profile a reviewer actually runs.
+   `@Version` column.** We measured H2 2.4.240 directly against this project's exact JDBC URL
+   (`H2LockSemanticsIT`): it takes a true blocking **row-level** exclusive lock on `FOR UPDATE`
+   (a second locker blocks for the full timeout, a *different* row is unaffected), with real
+   deadlock detection (SQLState `40001` in ~2ms on a reversed-order test) — so the pessimistic
+   lock alone already serializes correctly on the default runtime profile; in a 400-thread
+   contention run the optimistic path never had to fire. `@Version` is kept anyway, for three
+   different reasons, none of which is "H2's pessimistic lock can't be trusted": it protects any
+   future code path that reads `show_seat` without remembering to take `PESSIMISTIC_WRITE`
+   (developer error, not engine error); it is portability insurance given the guarantee is
+   asserted on two different engines; and it is what makes the lazy-expiry reclaim path fail
+   loudly on a stale concurrent read instead of silently overwriting. `GlobalExceptionHandler`
+   must map `ObjectOptimisticLockingFailureException` to `SEAT_UNAVAILABLE` (409) — if this path
+   ever fires and isn't mapped, it surfaces as a 500, and `OptimisticLockBackstopIT` exists
+   specifically to exercise it (bypass the pessimistic lock in a test-only code path and assert
+   exactly one winner via the version check).
 6. **Never hold a database row lock across a network call.** Payment gateway calls, and any other
    I/O, happen strictly between transactions, never inside one that holds seat locks.
 7. **`spring.jpa.open-in-view=false`** is set explicitly in every profile. Do not remove it.
@@ -152,20 +183,50 @@ reviewing a diff must check for these by hand.
 
 ## 7. Testing requirements
 
-- Unit tests: plain JUnit 5 + AssertJ, no Spring context, for pricing/refund rule logic — always
-  against a fixed/advanceable `Clock`, never `Thread.sleep()`.
+- **Test classpath is JUnit Platform 6 (Boot 4.1.1), not JUnit 5.** This matters for tooling
+  choices below — anything that only ships a Platform-1.x engine is a live compatibility risk.
+- Unit tests: JUnit Jupiter + AssertJ, no Spring context, for pricing/refund rule logic — always
+  against a fixed/advanceable `Clock`, never `Thread.sleep()`. Use AssertJ's `.as("...")`
+  description on every concurrency assertion — the description is what a reviewer reads when a
+  deliberately-broken test fails on camera.
 - Slice tests: `@WebMvcTest` (error contract, auth), `@DataJpaTest` (constraints).
-- Integration tests: `@SpringBootTest`, named `*IT`, run by Failsafe under `mvn verify`.
+- Integration tests: `@SpringBootTest`, named `*IT`, run by Failsafe under `mvn verify`. The
+  `maven-failsafe-plugin` must actually be bound in `pom.xml` — without it, Surefire's default
+  test-class includes mean `*IT` classes are **silently never executed** by either `mvn test` or
+  `mvn verify`. A green build that ran zero concurrency tests is the single worst outcome this
+  project can produce; verify Failsafe is wired by making one `*IT` deliberately fail once and
+  confirming `mvn verify` goes red for it.
 - **The concurrency suite (`ConcurrentSeatHoldIT` and siblings) runs on both H2 and real
-  Postgres** (abstract base class, two engine-specific subclasses). The H2 run is what proves the
-  guarantee holds on the profile a reviewer actually launches; the Postgres run is what proves it
-  on the intended production engine. Never let one subsume the other.
-- Every concurrency test must follow the five rules in the `concurrency-testing` skill
-  (two latches, Hikari pool ≥ thread count, no `@Transactional` on the test method, assert
-  against DB truth not in-process counters, assert the unexpected-exception queue is empty).
-  Read that skill before writing or reviewing a concurrency test.
-- `mvn test` = fast suite, H2 only, no network. `mvn verify` = adds the embedded-Postgres suite,
-  and must skip gracefully (not fail) if the Postgres binary can't be fetched.
+  Postgres** (abstract base class, two engine-specific subclasses), **plus at least one variant
+  driven over real HTTP** (`@SpringBootTest(webEnvironment = RANDOM_PORT)` + `TestRestTemplate`).
+  A service-layer test proves the lock serializes; it does not prove the loser gets a `409`
+  rather than a `500` — that mapping is exactly what `scripts/demo.sh` shows on camera, so it
+  must be pinned by a test, not left to the demo to discover. The H2 run proves the guarantee on
+  the profile a reviewer actually launches; the Postgres run proves it on the intended production
+  engine. Never let one subsume the other.
+- Every concurrency test must follow the rules in the `concurrency-testing` skill (updated after
+  measurement — see that skill for the full, current list: it now includes acquiring the DB
+  connection *before* counting down the ready latch, closing the accounting
+  `wins + losses + unexpected == threads`, and asserting global "nothing left behind," not just
+  on the contended row).
+- **Postgres integration tests fail loudly by default if the embedded binary can't start** —
+  never a silent skip. Provide an explicit `-Dpostgres.it.skip=true` opt-out for an offline
+  reviewer, documented in the README, and print the outcome either way
+  (`Concurrency suite: H2=PASS, PostgreSQL=PASS` or `PostgreSQL=SKIPPED (binary unavailable)`).
+  An invisible skip is how an unproven guarantee ships; a visible one is honest engineering.
+- Use the raw `io.zonky.test:embedded-postgres` API directly (start one instance, wire the JDBC
+  URL via `@DynamicPropertySource`) — **not** the `embedded-database-spring-test` /
+  `@AutoConfigureEmbeddedDatabase` module, which is not validated against Boot 4 / Spring
+  Framework 7 / JUnit Platform 6.
+- **ArchUnit: use the plain `com.tngtech.archunit:archunit` library from ordinary `@Test`
+  methods, never `archunit-junit5`** (that engine targets JUnit Platform 1.x and is a live
+  incompatibility risk on Platform 6). JaCoCo, if used, must be ≥0.8.13 for Java 25 class-file
+  support (major version 69) — verify it produces a non-zero report before relying on it in the
+  video. **Mutation testing (PIT) is cut**: `pitest-junit5-plugin` tracks Platform 1.x, stacking a
+  second unproven compatibility on top of Java 25 bytecode, for the least-graded module in the
+  system. If ArchUnit and the query-count/N+1 tests exist, that quality-tooling budget is better
+  spent than on PIT.
+- `mvn test` = fast suite, H2 only, no network. `mvn verify` = adds the embedded-Postgres suite.
 
 ## 8. Commit discipline
 

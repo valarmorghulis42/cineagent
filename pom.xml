@@ -35,6 +35,19 @@
 			<artifactId>spring-boot-h2console</artifactId>
 		</dependency>
 		<dependency>
+			<!-- JWT signing/verification. No Jackson dependency at all (own minimal JSON),
+			     so it can never collide with the Jackson 3 packages Boot 4 ships -->
+			<groupId>com.nimbusds</groupId>
+			<artifactId>nimbus-jose-jwt</artifactId>
+			<version>10.9.1</version>
+		</dependency>
+		<dependency>
+			<!-- springdoc-openapi: verified compatible with Spring Boot 4.x / Java 21+ -->
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>3.1.1</version>
+		</dependency>
+		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-jpa</artifactId>
 		</dependency>
@@ -126,6 +139,22 @@
 								</path>
 							</annotationProcessorPaths>
 						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<!-- Without this, *IT classes are SILENTLY never executed by either mvn test or
+				     mvn verify (Surefire's default includes only match *Test/Test*/*Tests). A green
+				     build that ran zero concurrency tests is the worst outcome this project can
+				     produce - see AGENTS.md section 7. -->
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<executions>
+					<execution>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
 					</execution>
 				</executions>
 			</plugin>

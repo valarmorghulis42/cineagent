@@ -1,0 +1,73 @@
+# Default profile: H2 in-memory, PostgreSQL compatibility mode.
+# Zero external dependencies — `./mvnw spring-boot:run` works on a clean machine.
+# Activate the real target engine with `--spring.profiles.active=postgres`.
+spring:
+  application:
+    name: cineagent
+
+  datasource:
+    url: "jdbc:h2:mem:cineagent;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=5000"
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+    hikari:
+      # 32, not the Boot default of 10 or an earlier 20: a 20-way demo burst (scripts/demo.sh)
+      # against a pool of 20 has zero headroom -- any second concurrent connection need (an
+      # audit insert, an outbox write) risks pool-exhaustion producing a 500 instead of the
+      # expected 409 mid-demo. connection-timeout is lowered so starvation fails fast (a few
+      # seconds) rather than hanging the default 30s on camera.
+      maximum-pool-size: 32
+      connection-timeout: 10000
+      pool-name: cineagent-hikari
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+        jdbc.lob.non_contextual_creation: true
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  threads:
+    virtual:
+      enabled: false # deliberate — see AGENTS.md §4.10
+
+server:
+  port: 8080
+
+app:
+  jwt:
+    # Dev-only default. Override via JWT_SECRET env var for anything beyond local dev/demo.
+    secret: "${JWT_SECRET:dev-only-insecure-secret-key-change-me-before-any-real-deployment-32bytes+}"
+    expiration-minutes: 60
+  hold:
+    ttl-minutes: 5
+    payment-window-minutes: 10
+    max-seats-per-hold: 10
+    max-active-holds-per-user: 3
+    sweep-interval: PT15S
+    sweep-batch-size: 200
+  reminder:
+    lead-time-hours: 2
+    check-interval: PT5M
+  scheduling:
+    enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"
+  level:
+    com.cineagent: INFO

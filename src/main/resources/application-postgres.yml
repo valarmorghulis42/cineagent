@@ -1,0 +1,17 @@
+# Real Postgres profile — the intended production target. Optional for local dev; a
+# docker-compose.yml is provided purely as a convenience for standing one up (this is dev
+# tooling, not the deployment/containerization the assignment puts out of scope).
+spring:
+  datasource:
+    url: "${DB_URL:jdbc:postgresql://localhost:5432/cineagent}"
+    driver-class-name: org.postgresql.Driver
+    username: "${DB_USERNAME:cineagent}"
+    password: "${DB_PASSWORD:cineagent}"
+    hikari:
+      maximum-pool-size: 32
+      connection-timeout: 10000
+      # H2's JDBC URL sets LOCK_TIMEOUT=5000 directly; Postgres has no equivalent URL parameter,
+      # so every pooled connection sets it explicitly on acquisition. Without this a transaction
+      # stuck on a row lock would wait indefinitely instead of surfacing as a bounded, clean 409
+      # (SEAT_CONTENTION_TIMEOUT) — see AGENTS.md A4.
+      connection-init-sql: "SET lock_timeout = '5000ms'"
