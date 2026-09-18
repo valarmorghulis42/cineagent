@@ -1,9 +1,7 @@
-# Demo profile: default H2 datasource + seeded demo data (V900__demo_data.sql) + a short hold
-# TTL so the video doesn't have to wait for realistic timings.
-spring:
-  flyway:
-    locations: classpath:db/migration,classpath:db/demo-data
-
+# Demo profile: default H2 datasource, a short hold TTL and fast sweep interval so
+# scripts/demo.sh can demonstrate hold expiry and the sweeper without a real wait. Catalog/show
+# data is created live by scripts/demo.sh via the admin API, on purpose — a recorded demo that
+# shows the admin endpoints working beats one that hides setup behind a SQL seed file.
 app:
   hold:
     ttl-minutes: 1

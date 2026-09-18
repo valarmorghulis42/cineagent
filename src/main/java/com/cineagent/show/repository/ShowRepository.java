@@ -67,4 +67,8 @@ public interface ShowRepository extends JpaRepository<Show, Long> {
       "select s from Show s join fetch s.screen sc join fetch sc.theater t "
           + "join fetch s.movie m join fetch s.city c where s.id = :id")
   Optional<Show> findByIdFetchAll(@Param("id") Long id);
+
+  /** Backs the reminder job — shows starting within the lead-time window, still SCHEDULED. */
+  @Query("select s from Show s where s.status = 'SCHEDULED' and s.startsAt >= :from and s.startsAt < :to")
+  List<Show> findStartingBetween(@Param("from") Instant from, @Param("to") Instant to);
 }

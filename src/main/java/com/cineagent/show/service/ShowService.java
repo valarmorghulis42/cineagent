@@ -135,4 +135,10 @@ public class ShowService {
   public List<ShowPrice> getPrices(Long showId) {
     return showPriceRepository.findByShowId(showId);
   }
+
+  /** Used by the reminder job — same dependency-rule reason as {@link #getPrices}. */
+  @Transactional(readOnly = true)
+  public List<Show> findStartingBetween(Instant from, Instant to) {
+    return showRepository.findStartingBetween(from, to);
+  }
 }

@@ -44,4 +44,16 @@ public class SeatHoldController {
     seatHoldService.release(holdId, user.userId());
     return ResponseEntity.noContent().build();
   }
+
+  @PostMapping("/api/v1/admin/show-seats/{showSeatId}/block")
+  public ResponseEntity<Void> blockSeat(@PathVariable Long showSeatId) {
+    seatHoldService.blockSeat(showSeatId);
+    return ResponseEntity.noContent().build();
+  }
+
+  @PostMapping("/api/v1/admin/show-seats/{showSeatId}/unblock")
+  public ResponseEntity<Void> unblockSeat(@PathVariable Long showSeatId) {
+    seatHoldService.unblockSeat(showSeatId);
+    return ResponseEntity.noContent().build();
+  }
 }

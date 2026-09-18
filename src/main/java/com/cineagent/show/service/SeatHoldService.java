@@ -228,6 +228,34 @@ public class SeatHoldService {
     locked.forEach(ShowSeat::cancelBooking);
   }
 
+  /** Admin seat-blocking (a broken seat, a press hold) — only ever a single row, but still
+   * routed through the same locking query as everything else for consistency. */
+  @Transactional
+  public void blockSeat(Long showSeatId) {
+    ShowSeat seat = lockSingle(showSeatId);
+    if (seat.getStatus() != ShowSeatStatus.AVAILABLE) {
+      throw new ConflictException(ErrorCode.SEAT_UNAVAILABLE, "Seat " + showSeatId + " is not AVAILABLE (currently " + seat.getStatus() + ")");
+    }
+    seat.block();
+  }
+
+  @Transactional
+  public void unblockSeat(Long showSeatId) {
+    ShowSeat seat = lockSingle(showSeatId);
+    if (seat.getStatus() != ShowSeatStatus.BLOCKED) {
+      throw new ConflictException(ErrorCode.SEAT_UNAVAILABLE, "Seat " + showSeatId + " is not BLOCKED (currently " + seat.getStatus() + ")");
+    }
+    seat.unblock();
+  }
+
+  private ShowSeat lockSingle(Long showSeatId) {
+    List<ShowSeat> locked = showSeatRepository.lockAllByIdInOrder(List.of(showSeatId));
+    if (locked.isEmpty()) {
+      throw ResourceNotFoundException.of(ErrorCode.RESOURCE_NOT_FOUND, showSeatId);
+    }
+    return locked.get(0);
+  }
+
   public record HeldSeatsSnapshot(SeatHold hold, List<ShowSeat> seats) {}
 
   private SeatHold getOwnedActiveHold(Long holdId, Long userId) {
