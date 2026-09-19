@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end demo of every feature in the system, driven entirely through the live HTTP API —
 # nothing here is a unit test double or an in-process call. Run against a freshly started app
-# (default H2 profile, or `--spring.profiles.active=demo` for a 1-minute hold TTL so the
-# hold-expiry section doesn't need a real wait).
+# (default H2 profile, or `--spring.profiles.active=demo` for a faster sweep interval so the
+# ops/sweep-now section has something to actually converge).
 #
 # Usage:
 #   ./mvnw spring-boot:run                              # terminal 1

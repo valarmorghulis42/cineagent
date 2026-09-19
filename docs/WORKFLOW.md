@@ -320,7 +320,7 @@ transition commits, is not deduplicated) — noted here rather than silently lef
 
 ```bash
 ./mvnw spring-boot:run                          # default H2 profile, zero external deps
-./mvnw spring-boot:run -Dspring-boot.run.profiles=demo   # 1-minute hold TTL, 5s sweep interval
+./mvnw spring-boot:run -Dspring-boot.run.profiles=demo   # 15-minute hold TTL, 5s sweep interval
 ./scripts/demo.sh                                # every workflow above, against the live app
 ```
 

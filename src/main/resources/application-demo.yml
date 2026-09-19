@@ -1,8 +1,11 @@
-# Demo profile: default H2 datasource, a short hold TTL and fast sweep interval so
-# scripts/demo.sh can demonstrate hold expiry and the sweeper without a real wait. Catalog/show
-# data is created live by scripts/demo.sh via the admin API, on purpose — a recorded demo that
-# shows the admin endpoints working beats one that hides setup behind a SQL seed file.
+# Demo profile: default H2 datasource, a fast sweep interval so admin/ops/sweep-now has
+# something to actually converge, and a GENEROUS hold TTL -- not a short one. Nothing in the
+# recorded demo relies on a hold expiring naturally (the sweeper is shown via the on-demand
+# trigger instead), and a live presenter narrating between "hold" and "book" needs real
+# breathing room -- a short TTL here just means HOLD_EXPIRED mid-recording. Catalog/show data is
+# created live via the admin API on purpose — a recorded demo that shows the admin endpoints
+# working beats one that hides setup behind a SQL seed file.
 app:
   hold:
-    ttl-minutes: 1
+    ttl-minutes: 15
     sweep-interval: PT5S
