@@ -14,6 +14,23 @@ java -jar target/cineagent-0.0.1-SNAPSHOT.jar
 The app boots on `localhost:8080`.
 An initial dataset (cities, theaters, users, and admin roles) is seeded automatically via Flyway.
 
+Full architectural reasoning, sequence diagrams, the requirements traceability matrix, and a
+list of known gaps live in **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — this README stays a quick
+start and feature list on purpose.
+
+## Configuration
+
+Every setting below has a safe default and none are required to run locally. See
+**[`.env.example`](.env.example)** for the full list with explanations; copy it to `.env`
+(gitignored) and `export $(grep -v '^#' .env | xargs)` before starting the app, or export
+individual variables directly.
+
+| Variable | Used for | Default |
+|---|---|---|
+| `JWT_SECRET` | HS256 signing key | a committed dev-only value |
+| `GEMINI_API_KEY` | real NL-search parsing (optional, see below) | unset — deterministic parser used instead |
+| `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | `postgres` profile only | local Postgres defaults |
+
 ## Features
 
 - **Seat-level booking**: Materialized `show_seat` rows, one per `(show, seat)`
@@ -22,7 +39,11 @@ An initial dataset (cities, theaters, users, and admin roles) is seeded automati
 - **Discount codes**: Usage capped, flat or percentage-based
 - **Configurable refund policies**: Tiered pro-rata per-seat refunds
 - **Concurrency & Seat Locking Guarantee**: Strong serialization for concurrent booking to prevent double-allocation
-- **Notifications**: Transactional outbox for async notifications
+- **Notifications**: Transactional outbox for async notifications, plus a reminder job and an
+  ETA-based "leave now" nudge (Swiggy/Zomato-style meme copy)
+- **Natural-language show search**: `GET /shows/search?q=...` — deterministic keyword parsing by
+  default, or real Gemini-backed parsing when `GEMINI_API_KEY` + `app.ai.gemini.enabled=true` are
+  set, with automatic fallback to the deterministic parser on any API failure
 
 ## Tech stack
 
@@ -108,12 +129,21 @@ erDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING_PAYMENT : create booking
-    PENDING_PAYMENT --> CONFIRMED : payment success
-    PENDING_PAYMENT --> CANCELLED : payment failed/timeout
-    CONFIRMED --> CANCELLED : refund success
+    [*] --> PENDING_PAYMENT
+    PENDING_PAYMENT --> CONFIRMED: pay succeeds
+    PENDING_PAYMENT --> PAYMENT_FAILED: pay declines
+    PENDING_PAYMENT --> SEAT_LOST_AFTER_PAYMENT: charge ok, hold lost in flight
+    CONFIRMED --> PARTIALLY_CANCELLED: cancel some seats
+    CONFIRMED --> CANCELLED: cancel all seats
+    PARTIALLY_CANCELLED --> PARTIALLY_CANCELLED: cancel more (not all)
+    PARTIALLY_CANCELLED --> CANCELLED: cancel the rest
+    PAYMENT_FAILED --> [*]
+    SEAT_LOST_AFTER_PAYMENT --> [*]
     CANCELLED --> [*]
 ```
+
+Full mechanics of the payment split (why the gateway call never runs inside a lock-holding
+transaction, and the `SEAT_LOST_AFTER_PAYMENT` compensation path) are in `ARCHITECTURE.md`.
 
 ## API reference
 
@@ -124,7 +154,7 @@ Full OpenAPI spec is live at `/v3/api-docs` and browsable at `/swagger-ui.html`.
 | **Auth** (public) | `POST /auth/register`, `POST /auth/login`, `GET /auth/me` |
 | **Catalog** (public browse) | `GET /cities`, `GET /cities/{id}/theaters`, `GET /movies`, `GET /screens/{id}/seats` |
 | **Catalog** (admin) | `POST`/`PUT /admin/cities`, `POST`/`PUT /admin/theaters`, `POST /admin/screens`, `POST /admin/screens/{id}/seats/bulk`, `POST`/`PUT /admin/movies` |
-| **Shows** (public browse) | `GET /shows`, `GET /shows/{id}`, `GET /shows/{id}/seats` |
+| **Shows** (public browse) | `GET /shows`, `GET /shows/{id}`, `GET /shows/{id}/seats`, `GET /shows/search?q=...` (NL search) |
 | **Shows** (admin) | `POST /admin/shows`, `POST /admin/shows/{id}/cancel` |
 | **Seat holds** | `POST /shows/{id}/holds`, `POST /holds/{id}/extend`, `DELETE /holds/{id}` |
 | **Seat blocking** (admin) | `POST /admin/show-seats/{id}/block`, `POST /admin/show-seats/{id}/unblock` |
@@ -132,7 +162,7 @@ Full OpenAPI spec is live at `/v3/api-docs` and browsable at `/swagger-ui.html`.
 | **Refund policies** (admin) | `POST /admin/refund-policies` |
 | **Bookings** | `POST /bookings`, `POST /bookings/{id}/pay`, `POST /bookings/{id}/cancel-seats`, `POST /bookings/{id}/cancel`, `GET /bookings`, `GET /bookings/{id}`, `GET /bookings/{id}/seats`, `GET /bookings/{id}/charges`, `GET /bookings/{id}/history` |
 | **Notifications** (admin) | `GET /admin/notifications`, `POST /admin/notifications/dispatch-now` |
-| **Ops** (admin) | `POST /admin/ops/sweep-now`, `POST /admin/ops/remind-now` |
+| **Ops** (admin) | `POST /admin/ops/sweep-now`, `POST /admin/ops/remind-now`, `POST /admin/ops/nudge-now` |
 
 All `/api/v1/admin/**` routes require `ROLE_ADMIN`; everything else requires authentication
 except the explicitly public browse endpoints above.
@@ -146,12 +176,23 @@ except the explicitly public browse endpoints above.
 ```
 
 The test suite covers:
-- **Concurrency & Seat Locking Guarantee**: 4 integration test classes covering single-seat contention, overlapping multi-seat all-or-nothing, reversed-order-request deadlock freedom, and HTTP-level tests proving the loser gets a clean `409` conflict.
-- **Money/pricing math**: Unit tests for percentage/flat discounts, capping, and pro-rata seat-level allocations.
-- **Booking state machine**: Transitions and constraints.
-- **Discount usage-cap logic**: Window boundaries and minimum order conditions.
-- **Seat holds**: Exact expiry boundaries.
-- **Request validation**: Input validation across REST endpoints.
+- **Concurrency & Seat Locking Guarantee**: 4 integration test classes (`ConcurrentSeatHoldH2IT`,
+  `ConcurrentSeatHoldPostgresIT`, `ConcurrentSeatHoldHttpIT`) covering single-seat contention,
+  overlapping multi-seat all-or-nothing, reversed-order-request deadlock freedom, and HTTP-level
+  tests proving the loser gets a clean `409` conflict.
+- **Money/pricing math**: `DiscountCodeTest`, `BookingCreateServiceTest` — percentage/flat
+  discounts, capping, and pro-rata per-seat allocation summing exactly to the total.
+- **Refund resolution**: `RefundPolicyResolverTest`, `BookingCancellationServiceTest` —
+  most-specific-scope-wins ordering, exact tier boundaries, pro-rata refund on only the
+  refundable charge lines.
+- **Booking state machine**: `BookingStatusTest`, `BookingTest` — exhaustive transition matrix.
+- **Discount usage-cap logic**: `DiscountServiceTest` — validity window boundaries, redemption
+  cap, minimum order amount.
+- **Seat/hold expiry boundaries**: `ShowSeatTest`, `SeatHoldTest` — exact instant-of-expiry
+  behavior with a fixed `Clock`, no `Thread.sleep`.
+- **Request validation**: `BookingControllerValidationTest`, `AdminDiscountControllerValidationTest`.
+
+Full requirements-to-test traceability matrix is in `ARCHITECTURE.md`.
 
 ## The AI workflow
 
