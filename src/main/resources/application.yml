@@ -67,7 +67,7 @@ app:
       # reviewer use. Set GEMINI_API_KEY and app.ai.gemini.enabled=true to switch it on.
       enabled: false
       api-key: "${GEMINI_API_KEY:}"
-      model: "gemini-2.0-flash"
+      model: "gemini-flash-latest"
       timeout: PT8S
   scheduling:
     enabled: true
