@@ -57,6 +57,18 @@ app:
   reminder:
     lead-time-hours: 2
     check-interval: PT5M
+  eta:
+    # Flat estimate, not a real maps/traffic call — see EtaNudgeProperties.
+    travel-minutes: 45
+    check-interval: PT2M
+  ai:
+    gemini:
+      # Off by default -- the deterministic NL-search parser is what tests and an offline
+      # reviewer use. Set GEMINI_API_KEY and app.ai.gemini.enabled=true to switch it on.
+      enabled: false
+      api-key: "${GEMINI_API_KEY:}"
+      model: "gemini-2.0-flash"
+      timeout: PT8S
   scheduling:
     enabled: true
 

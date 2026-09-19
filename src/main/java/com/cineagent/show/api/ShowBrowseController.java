@@ -2,7 +2,9 @@ package com.cineagent.show.api;
 
 import com.cineagent.common.web.PageResponse;
 import com.cineagent.show.api.dto.SeatMapDtos.SeatMapEntry;
+import com.cineagent.show.api.dto.ShowDtos.NlSearchResponse;
 import com.cineagent.show.api.dto.ShowDtos.ShowResponse;
+import com.cineagent.show.service.NlShowSearchService;
 import com.cineagent.show.service.SeatMapQueryService;
 import com.cineagent.show.service.ShowService;
 import java.time.Instant;
@@ -26,10 +28,29 @@ public class ShowBrowseController {
 
   private final ShowService showService;
   private final SeatMapQueryService seatMapQueryService;
+  private final NlShowSearchService nlShowSearchService;
 
-  public ShowBrowseController(ShowService showService, SeatMapQueryService seatMapQueryService) {
+  public ShowBrowseController(
+      ShowService showService, SeatMapQueryService seatMapQueryService, NlShowSearchService nlShowSearchService) {
     this.showService = showService;
     this.seatMapQueryService = seatMapQueryService;
+    this.nlShowSearchService = nlShowSearchService;
+  }
+
+  /**
+   * Natural-language search, e.g. "interstellar in bengaluru this weekend" — see
+   * NlShowSearchService's javadoc for why this is a deterministic keyword parser, not an LLM
+   * call. The response echoes what was understood from the query alongside the results.
+   */
+  @GetMapping("/shows/search")
+  public NlSearchResponse search(
+      @RequestParam String q, @PageableDefault(size = 20, sort = "id") Pageable pageable) {
+    var result = nlShowSearchService.search(q, capped(pageable));
+    return new NlSearchResponse(
+        result.interpretedCity(),
+        result.interpretedDateRange(),
+        result.interpretedKeyword(),
+        result.results().getContent().stream().map(ShowResponse::from).toList());
   }
 
   @GetMapping("/shows")

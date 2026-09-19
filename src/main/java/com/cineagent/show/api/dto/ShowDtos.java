@@ -60,4 +60,9 @@ public final class ShowDtos {
           s.getCurrency());
     }
   }
+
+  /** What the natural-language parser understood from the query, alongside the results — so the
+   * interpretation is never a black box. Any field is null if that aspect wasn't detected. */
+  public record NlSearchResponse(
+      String interpretedCity, String interpretedDateRange, String interpretedKeyword, List<ShowResponse> results) {}
 }

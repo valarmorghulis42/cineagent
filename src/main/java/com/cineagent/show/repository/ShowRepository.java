@@ -71,4 +71,22 @@ public interface ShowRepository extends JpaRepository<Show, Long> {
   /** Backs the reminder job — shows starting within the lead-time window, still SCHEDULED. */
   @Query("select s from Show s where s.status = 'SCHEDULED' and s.startsAt >= :from and s.startsAt < :to")
   List<Show> findStartingBetween(@Param("from") Instant from, @Param("to") Instant to);
+
+  /** Backs natural-language show search (NlShowSearchService) — same fetch-join shape as
+   * {@link #browse}, with an optional title-substring match instead of an exact movieId. */
+  @Query(
+      "select s from Show s join fetch s.screen sc join fetch sc.theater t "
+          + "join fetch s.movie m join fetch s.city c "
+          + "where s.status = 'SCHEDULED' "
+          + "and (:cityId is null or s.city.id = :cityId) "
+          + "and (:keyword is null or lower(m.title) like lower(concat('%', :keyword, '%'))) "
+          + "and (:from is null or s.startsAt >= :from) "
+          + "and (:to is null or s.startsAt < :to) "
+          + "order by s.startsAt asc, s.id asc")
+  Page<Show> searchByTitleCityAndDateRange(
+      @Param("cityId") Long cityId,
+      @Param("keyword") String keyword,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      Pageable pageable);
 }
