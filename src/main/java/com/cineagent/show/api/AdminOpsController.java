@@ -1,5 +1,6 @@
 package com.cineagent.show.api;
 
+import com.cineagent.booking.service.EtaNudgeService;
 import com.cineagent.booking.service.ReminderService;
 import com.cineagent.show.service.HoldExpirySweeper;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,10 +14,13 @@ public class AdminOpsController {
 
   private final HoldExpirySweeper holdExpirySweeper;
   private final ReminderService reminderService;
+  private final EtaNudgeService etaNudgeService;
 
-  public AdminOpsController(HoldExpirySweeper holdExpirySweeper, ReminderService reminderService) {
+  public AdminOpsController(
+      HoldExpirySweeper holdExpirySweeper, ReminderService reminderService, EtaNudgeService etaNudgeService) {
     this.holdExpirySweeper = holdExpirySweeper;
     this.reminderService = reminderService;
+    this.etaNudgeService = etaNudgeService;
   }
 
   @PostMapping("/sweep-now")
@@ -27,5 +31,10 @@ public class AdminOpsController {
   @PostMapping("/remind-now")
   public String remindNow() {
     return "enqueued=" + reminderService.runOnce();
+  }
+
+  @PostMapping("/nudge-now")
+  public String nudgeNow() {
+    return "enqueued=" + etaNudgeService.runOnce();
   }
 }
